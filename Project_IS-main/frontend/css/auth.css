@@ -228,7 +228,7 @@
 .register-card h1 { margin: 0 0 6px; font-size: 1.65rem; }
 .register-card > p { margin: 0 0 12px; font-size: .9rem; }
 .register-card label { display:block; margin: 6px 0 3px; line-height: 1.2; }
-.register-card .form-input { height: 38px; padding-top: 6px; padding-bottom: 6px; }
+.register-card .form-input { height: 34px; min-height: 34px; padding: 4px 12px; line-height: 1.2; }
 .register-card label { margin: 6px 0 1px; font-size: .9rem; }
 .register-card #registerStatus, .register-card #registerMessage { margin: 6px 0; font-size: .85rem; }
 .register-card .auth-submit-btn { height: 40px; }
