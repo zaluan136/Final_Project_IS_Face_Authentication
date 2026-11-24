@@ -7,6 +7,7 @@ function createAttendanceRoutes(attendanceController, uploadPhotoMiddleware) {
 
   router.use(requireAuth);
 
+  router.get('/liveness-challenge', attendanceController.getLivenessChallenge);
   router.post('/check-in', csrfProtection, uploadPhotoMiddleware, attendanceController.checkIn);
   router.post('/check-out', csrfProtection, uploadPhotoMiddleware, attendanceController.checkOut);
   router.get('/today', attendanceController.getToday);

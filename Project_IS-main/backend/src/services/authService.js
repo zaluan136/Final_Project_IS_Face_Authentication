@@ -2,6 +2,18 @@ const bcrypt = require('bcrypt');
 const crypto = require('node:crypto');
 const { AppError } = require('../utils/errors');
 
+function isValidFaceDescriptor(value) {
+  return Array.isArray(value) && value.length === 128 &&
+    value.every((item) => Number.isFinite(item) && item >= -1 && item <= 1) &&
+    value.some((item) => item !== 0);
+}
+
+function validateStrongPassword(password) {
+  return typeof password === 'string' && password.length >= 8 && password.length <= 128 &&
+    /[a-z]/.test(password) && /[A-Z]/.test(password) && /\d/.test(password) &&
+    /[^A-Za-z0-9]/.test(password);
+}
+
 // Precomputed dummy hash to keep timing consistent when user is not found
 const DUMMY_BCRYPT_HASH = '$2b$12$C6UzMDM.H6dfI/f/IKxGhu5u1rQ2Q3Q4Q5Q6Q7Q8Q9Q0QaQbQcQdO';
 
@@ -43,7 +55,10 @@ class AuthService {
     if (this.employeeRepository.findByIdentifier(employeeCode) || this.employeeRepository.findByIdentifier(email)) {
       throw new AppError(409, 'ACCOUNT_EXISTS', 'Employee ID or email is already registered.');
     }
-    if (!Array.isArray(faceDescriptor) || faceDescriptor.length !== 128 || faceDescriptor.some((v) => !Number.isFinite(v))) {
+    if (!validateStrongPassword(password)) {
+      throw new AppError(400, 'WEAK_PASSWORD', 'Password must be 8-128 characters and include upper case, lower case, a number, and a special character.');
+    }
+    if (!isValidFaceDescriptor(faceDescriptor)) {
       throw new AppError(400, 'INVALID_FACE', 'A valid face scan is required.');
     }
     const passwordHash = await bcrypt.hash(password, 12);
@@ -64,7 +79,7 @@ class AuthService {
     } catch {
       enrolled = null;
     }
-    if (!enrolled || !Array.isArray(descriptor) || descriptor.length !== 128) {
+    if (!isValidFaceDescriptor(enrolled) || !isValidFaceDescriptor(descriptor)) {
       throw new AppError(401, 'FACE_NOT_ENROLLED', 'Tài khoản chưa có dữ liệu khuôn mặt hoặc khuôn mặt không hợp lệ.');
     }
     const distance = Math.sqrt(enrolled.reduce((sum, value, index) => sum + (value - descriptor[index]) ** 2, 0));

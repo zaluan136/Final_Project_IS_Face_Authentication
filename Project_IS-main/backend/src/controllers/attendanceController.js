@@ -1,9 +1,53 @@
 const fs = require('node:fs');
+const crypto = require('node:crypto');
+const { AppError } = require('../utils/errors');
 const { validatePaginationQuery } = require('../validators/attendanceValidator');
+const { verifyFaceEvidence } = require('../services/antiSpoofGate');
 
 function createAttendanceController(attendanceService) {
-  function checkIn(req, res, next) {
+  function getLivenessChallenge(req, res) {
+    const nonce = crypto.randomBytes(16).toString('hex');
+    const now = Date.now();
+    const challenges = req.session.attendanceLivenessChallenges || {};
+    for (const [issuedNonce, record] of Object.entries(challenges)) {
+      if (now - record.createdAt > 60 * 1000) delete challenges[issuedNonce];
+    }
+    challenges[nonce] = {
+      challengeId: 'blink-twice',
+      employeeId: req.session.employeeId,
+      createdAt: now,
+    };
+    req.session.attendanceLivenessChallenges = challenges;
+
+    return res.status(200).json({
+      success: true,
+      data: { nonce, challengeId: 'blink-twice', expiresInSeconds: 60 },
+    });
+  }
+
+  function consumeLivenessChallenge(req) {
+    if (!attendanceService.requiresLivenessChallenge(req.session.employeeId)) return;
+
+    const { livenessNonce, livenessChallenge } = req.body || {};
+    const challenges = req.session.attendanceLivenessChallenges || {};
+    const record = challenges[livenessNonce];
+    if (record) delete challenges[livenessNonce];
+    req.session.attendanceLivenessChallenges = challenges;
+
+    if (
+      !record ||
+      record.employeeId !== req.session.employeeId ||
+      record.challengeId !== livenessChallenge ||
+      Date.now() - record.createdAt > 60 * 1000
+    ) {
+      throw new AppError(403, 'LIVENESS_REQUIRED', 'Liveness challenge is missing, expired, or already used. Capture a new live face check.');
+    }
+  }
+
+  async function checkIn(req, res, next) {
     try {
+      consumeLivenessChallenge(req);
+      if (attendanceService.requiresLivenessChallenge(req.session.employeeId)) await verifyFaceEvidence(req.body.faceEvidence);
       let faceDescriptor = null;
       if (req.body && req.body.faceDescriptor) {
         try {
@@ -25,8 +69,10 @@ function createAttendanceController(attendanceService) {
     }
   }
 
-  function checkOut(req, res, next) {
+  async function checkOut(req, res, next) {
     try {
+      consumeLivenessChallenge(req);
+      if (attendanceService.requiresLivenessChallenge(req.session.employeeId)) await verifyFaceEvidence(req.body.faceEvidence);
       let faceDescriptor = null;
       if (req.body && req.body.faceDescriptor) {
         try {
@@ -105,6 +151,7 @@ function createAttendanceController(attendanceService) {
   }
 
   return {
+    getLivenessChallenge,
     checkIn,
     checkOut,
     getToday,

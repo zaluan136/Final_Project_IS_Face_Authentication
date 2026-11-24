@@ -30,6 +30,12 @@ class AttendanceService {
     this.authService = authService;
   }
 
+  requiresLivenessChallenge(employeeId) {
+    if (!this.authService) return false;
+    const employee = this.authService.employeeRepository.findById(employeeId);
+    return Boolean(employee?.face_descriptor);
+  }
+
   verifyEmployeeFace(employeeId, faceDescriptor) {
     if (!this.authService) return;
     const employee = this.authService.employeeRepository.findById(employeeId);
@@ -44,10 +50,14 @@ class AttendanceService {
     }
     // Nếu có gửi faceDescriptor hoặc tài khoản đã đăng ký khuôn mặt
     if (faceDescriptor || enrolled) {
-      if (!Array.isArray(faceDescriptor) || faceDescriptor.length !== 128) {
+      const isValidDescriptor = (value) =>
+        Array.isArray(value) && value.length === 128 &&
+        value.every((item) => Number.isFinite(item) && item >= -1 && item <= 1) &&
+        value.some((item) => item !== 0);
+      if (!isValidDescriptor(faceDescriptor)) {
         throw new AppError(400, 'INVALID_FACE_SCAN', 'Cần quét khuôn mặt hợp lệ để chấm công.');
       }
-      if (!enrolled) {
+      if (!isValidDescriptor(enrolled)) {
         throw new AppError(400, 'FACE_NOT_ENROLLED', 'Tài khoản chưa có dữ liệu khuôn mặt mẫu.');
       }
       const distance = Math.sqrt(enrolled.reduce((sum, value, index) => sum + (value - faceDescriptor[index]) ** 2, 0));

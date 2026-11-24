@@ -6,7 +6,7 @@ $nodeVersion = (& $node.Source --version 2>$null) -replace '^v', ''
 try { $version = [version]$nodeVersion } catch { Write-Host "Invalid Node.js version: $nodeVersion" -ForegroundColor Red; Read-Host 'Press Enter to close'; exit 1 }
 if ($version -lt [version]'22.5') { Write-Host "Node.js 22.5+ required. Found: $nodeVersion" -ForegroundColor Red; Read-Host 'Press Enter to close'; exit 1 }
 Set-Location -LiteralPath $backendPath
-if (-not (Test-Path (Join-Path $backendPath 'node_modules'))) { Write-Host 'Installing dependencies...' -ForegroundColor Cyan; & $npm.Source install; if ($LASTEXITCODE -ne 0) { Write-Host 'Dependency installation failed.' -ForegroundColor Red; Read-Host 'Press Enter to close'; exit 1 } }
+if (-not (Test-Path (Join-Path $backendPath 'node_modules/onnxruntime-node')) -or -not (Test-Path (Join-Path $backendPath 'node_modules/sharp'))) { Write-Host 'Installing dependencies...' -ForegroundColor Cyan; & $npm.Source install; if ($LASTEXITCODE -ne 0) { Write-Host 'Dependency installation failed.' -ForegroundColor Red; Read-Host 'Press Enter to close'; exit 1 } }
 Write-Host 'Creating or refreshing demo accounts...' -ForegroundColor Cyan
 & $npm.Source run seed
 if ($LASTEXITCODE -ne 0) { Write-Host 'Demo account setup failed.' -ForegroundColor Red; Read-Host 'Press Enter to close'; exit 1 }

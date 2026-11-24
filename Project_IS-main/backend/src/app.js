@@ -69,7 +69,7 @@ function createApp(overrides = {}) {
     })
   );
 
-  app.use(express.json({ limit: '64kb' }));
+  app.use(express.json({ limit: '2mb' }));
 
   app.use(
     session({
@@ -88,6 +88,14 @@ function createApp(overrides = {}) {
       },
     })
   );
+
+  // Liveness-critical scripts must not remain cached after local updates.
+  app.use((req, res, next) => {
+    if (/\.(?:html|js)$/.test(req.path) || ['/login', '/register', '/dashboard', '/attendance', '/history', '/profile'].includes(req.path)) {
+      res.setHeader('Cache-Control', 'no-store, max-age=0');
+    }
+    next();
+  });
 
   // API v1 routes
   app.use('/api/v1/health', createHealthRoutes());

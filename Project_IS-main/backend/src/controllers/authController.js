@@ -1,14 +1,13 @@
 const crypto = require('node:crypto');
 const { ensureCsrfToken } = require('../middleware/csrfMiddleware');
 const { validateLoginPayload } = require('../validators/authValidator');
+const { verifyFaceEvidence } = require('../services/antiSpoofGate');
 
 // Challenge pool theo báo cáo giữa kỳ (Active Liveness Challenge - Response)
 const CHALLENGE_POOL = [
   { id: 'blink', instruction: 'Hãy CHỚP MẮT tự nhiên (2 lần)' },
-  { id: 'turn-left', instruction: 'Hãy QUAY MẶT SANG TRÁI, sau đó nhìn thẳng' },
-  { id: 'turn-right', instruction: 'Hãy QUAY MẶT SANG PHẢI, sau đó nhìn thẳng' },
-  { id: 'turn-left-blink', instruction: 'Hãy QUAY MẶT SANG TRÁI rồi CHỚP MẮT' },
-  { id: 'turn-right-blink', instruction: 'Hãy QUAY MẶT SANG PHẢI rồi CHỚP MẮT' },
+  { id: 'turn-left-blink', instruction: 'Hãy QUAY MẶT SANG TRÁI, nhìn thẳng lại rồi CHỚP MẮT 2 LẦN' },
+  { id: 'turn-right-blink', instruction: 'Hãy QUAY MẶT SANG PHẢI, nhìn thẳng lại rồi CHỚP MẮT 2 LẦN' },
 ];
 
 function createAuthController(authService, env) {
@@ -22,16 +21,20 @@ function createAuthController(authService, env) {
 
   function getLivenessChallenge(req, res) {
     const nonce = crypto.randomBytes(16).toString('hex');
-    const selected = CHALLENGE_POOL[Math.floor(Math.random() * CHALLENGE_POOL.length)];
+    const selected = CHALLENGE_POOL[crypto.randomInt(CHALLENGE_POOL.length)];
 
-    if (!req.session.livenessChallenges) {
-      req.session.livenessChallenges = {};
+    // Keep only live challenges so a long-lived session cannot accumulate tokens.
+    const now = Date.now();
+    const livenessChallenges = req.session.livenessChallenges || {};
+    for (const [issuedNonce, record] of Object.entries(livenessChallenges)) {
+      if (now - record.createdAt > 60 * 1000) delete livenessChallenges[issuedNonce];
     }
     // Lưu nonce với thời hạn 60 giây
-    req.session.livenessChallenges[nonce] = {
+    livenessChallenges[nonce] = {
       challengeId: selected.id,
-      createdAt: Date.now(),
+      createdAt: now,
     };
+    req.session.livenessChallenges = livenessChallenges;
 
     return res.status(200).json({
       success: true,
@@ -44,10 +47,14 @@ function createAuthController(authService, env) {
     });
   }
 
-  async function login(req, res, next) {
+  async function login(req, res, next, faceVerified = false) {
     try {
       const { identifier, password, rememberMe } = validateLoginPayload(req.body);
       const employee = await authService.authenticate(identifier, password);
+      const enrolledEmployee = authService.employeeRepository.findByIdentifier(identifier);
+      if (enrolledEmployee?.face_descriptor && !faceVerified) {
+        return res.status(403).json({ success: false, error: { code: 'FACE_REQUIRED', message: 'Tài khoản cần xác thực khuôn mặt.' } });
+      }
 
       req.session.regenerate((regenErr) => {
         if (regenErr) {
@@ -103,14 +110,14 @@ function createAuthController(authService, env) {
     try {
       const { identifier, password, faceDescriptor, liveness, nonce } = req.body || {};
 
-      // 1. Kiểm tra session nonce & thử thách chống Replay Video / Replay Attack
+      // Validate a single-use challenge nonce; this does not verify video liveness.
       const challenges = req.session.livenessChallenges || {};
       const challengeRecord = challenges[nonce];
 
       if (!nonce || !challengeRecord) {
         return res.status(403).json({
           success: false,
-          error: { code: 'INVALID_NONCE', message: 'Thử thách xác thực không hợp lệ hoặc đã hết hạn (Anti-Replay).' },
+          error: { code: 'INVALID_NONCE', message: 'Thử thách xác thực không hợp lệ hoặc đã hết hạn.' },
         });
       }
 
@@ -132,9 +139,10 @@ function createAuthController(authService, env) {
         });
       }
 
-      const employee = await authService.authenticateFace(identifier, password, faceDescriptor);
+      await authService.authenticateFace(identifier, password, faceDescriptor);
+      await verifyFaceEvidence(req.body.faceEvidence);
       req.body = { identifier, password, rememberMe: Boolean(req.body.rememberMe) };
-      return login(req, res, next);
+      return login(req, res, next, true);
     } catch (err) { return next(err); }
   }
 

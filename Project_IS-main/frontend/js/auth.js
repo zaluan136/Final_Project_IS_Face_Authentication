@@ -1,5 +1,6 @@
 import { apiRequest, ensureCsrfToken, setCsrfToken } from './api.js';
-import { loadFaceModels, detectFaceWithDetails } from './face.js';
+import { loadFaceModels, loadBlinkModel } from './face.js';
+import { verifyDynamicChallenge } from './faceChallenge.js';
 
 const loginForm = document.getElementById('loginForm');
 const identifierInput = document.getElementById('identifier');
@@ -31,7 +32,7 @@ let cameraStream;
     await faceVideo.play();
 
     if (faceStatus) faceStatus.textContent = 'Đang nạp mô hình nhận diện khuôn mặt...';
-    await loadFaceModels();
+    await Promise.all([loadFaceModels(), loadBlinkModel()]);
     if (faceStatus) faceStatus.textContent = 'Webcam sẵn sàng. Nhập thông tin và bấm Đăng nhập.';
   } catch (err) {
     console.error(err);
@@ -76,104 +77,6 @@ ensureCsrfToken().catch(() => {
   // Token will be fetched on submit if initial prefetch fails
 });
 
-/**
- * Thực hiện Active Liveness Challenge - Response theo chỉ định động từ Backend:
- * Ngăn chặn tuyệt đối Replay Attack (Video quay sẵn hoặc ảnh tĩnh giơ lên):
- * - Nếu là video quay sẵn: Video chỉ phát hành động cố định, không thể đáp ứng đúng thử thách ngẫu nhiên mà Server vừa tạo.
- * - Server cấp Session Nonce ngẫu nhiên dùng 1 lần (Single-use token).
- */
-async function verifyDynamicChallenge(video, statusElem, challenge) {
-  const { challengeId, instruction } = challenge;
-  const startTime = Date.now();
-  const maxDurationMs = 7000; // Tăng lên 7 giây để người dùng thoải mái thực hiện chuỗi hành động
-
-  let blinkCount = 0;
-  let eyeClosedOnce = false;
-  let turnedLeft = false;
-  let turnedRight = false;
-  let initialYaw = null;
-  let lastDescriptor = null;
-  let framesCount = 0;
-
-  if (statusElem) {
-    statusElem.textContent = `🎯 THỬ THÁCH BẢO MẬT: ${instruction}`;
-    statusElem.style.color = '#a87545';
-  }
-
-  while (Date.now() - startTime < maxDurationMs) {
-    const data = await detectFaceWithDetails(video);
-    if (data) {
-      framesCount++;
-      lastDescriptor = data.descriptor;
-
-      if (initialYaw === null) {
-        initialYaw = data.yawRatio;
-      }
-
-      // 1. Nhận diện nhịp chớp mắt sinh học (ngưỡng nhạy hơn: nhắm < 0.245, mở lại > 0.26)
-      if (data.ear < 0.245) {
-        eyeClosedOnce = true;
-      }
-      if (eyeClosedOnce && data.ear > 0.26) {
-        blinkCount++;
-        eyeClosedOnce = false;
-      }
-
-      // 2. Nhận diện góc quay đầu:
-      // Kết hợp cả ngưỡng tuyệt đối (0.75 / 1.35) và độ lệch tương đối so với lúc đầu (diff >= 0.25)
-      // Do video có transform scaleX(-1), quay bên nào thì tỉ lệ phản ánh đúng bên đó
-      const yawDelta = data.yawRatio - initialYaw;
-      if (data.yawRatio < 0.75 || yawDelta < -0.25) {
-        turnedLeft = true;
-      }
-      if (data.yawRatio > 1.35 || yawDelta > 0.25) {
-        turnedRight = true;
-      }
-
-      // Cập nhật trạng thái tiến độ thời gian thực để người dùng biết mình đã làm được bước nào
-      if (statusElem) {
-        let progressMsg = instruction;
-        if (challengeId === 'turn-left-blink') {
-          progressMsg = `[1/2] Quay trái: ${turnedLeft ? '✅' : '⏳'} | [2/2] Chớp mắt: ${blinkCount >= 1 ? '✅' : '⏳'}`;
-        } else if (challengeId === 'turn-right-blink') {
-          progressMsg = `[1/2] Quay phải: ${turnedRight ? '✅' : '⏳'} | [2/2] Chớp mắt: ${blinkCount >= 1 ? '✅' : '⏳'}`;
-        } else if (challengeId === 'blink') {
-          progressMsg = `Đã chớp mắt: ${blinkCount}/2 lần ${blinkCount >= 2 ? '✅' : ''}`;
-        } else if (challengeId === 'turn-left') {
-          progressMsg = `Quay trái: ${turnedLeft ? '✅' : '⏳ Đang nhận...'}`;
-        } else if (challengeId === 'turn-right') {
-          progressMsg = `Quay phải: ${turnedRight ? '✅' : '⏳ Đang nhận...'}`;
-        }
-        statusElem.textContent = `🎯 ${progressMsg}`;
-      }
-
-      // Kiểm tra thỏa mãn điều kiện theo từng kịch bản ngẫu nhiên
-      let satisfied = false;
-      if (challengeId === 'blink' && blinkCount >= 2) {
-        satisfied = true;
-      } else if (challengeId === 'turn-left' && turnedLeft) {
-        satisfied = true;
-      } else if (challengeId === 'turn-right' && turnedRight) {
-        satisfied = true;
-      } else if (challengeId === 'turn-left-blink' && turnedLeft && blinkCount >= 1) {
-        satisfied = true;
-      } else if (challengeId === 'turn-right-blink' && turnedRight && blinkCount >= 1) {
-        satisfied = true;
-      }
-
-      if (satisfied) {
-        return lastDescriptor;
-      }
-    }
-    await new Promise((r) => setTimeout(r, 60));
-  }
-
-  if (framesCount < 5 || !lastDescriptor) {
-    throw new Error('Không phát hiện được khuôn mặt rõ ràng trong khung hình.');
-  }
-
-  throw new Error(`⚠️ CẢNH BÁO GIẢ MẠO / VIDEO PHÁT LẠI: Thử thách không đạt yêu cầu ("${instruction}"). Không dùng ảnh tĩnh hoặc video ghi hình sẵn!`);
-}
 
 loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -207,10 +110,10 @@ loginForm.addEventListener('submit', async (event) => {
     const challenge = challengeRes.data;
 
     // 2. Giai đoạn 2: Quét luồng Video & Thẩm định tính sống thời gian thực đối chiếu với thử thách
-    const verifiedDescriptor = await verifyDynamicChallenge(faceVideo, faceStatus, challenge);
+    const verification = await verifyDynamicChallenge(faceVideo, faceStatus, challenge);
 
     if (faceStatus) {
-      faceStatus.textContent = '✅ Vượt qua thử thách sống! Đang so khớp danh tính với khuôn mặt đã đăng ký...';
+      faceStatus.textContent = '✅ Đã hoàn thành thử thách. Đang so khớp khuôn mặt đã đăng ký...';
       faceStatus.style.color = '#27ae60';
     }
 
@@ -221,7 +124,8 @@ loginForm.addEventListener('submit', async (event) => {
         identifier,
         password,
         rememberMe,
-        faceDescriptor: verifiedDescriptor,
+        faceDescriptor: verification.descriptor,
+        faceEvidence: verification.evidence,
         liveness: challenge.challengeId,
         nonce: challenge.nonce,
       },

@@ -5,7 +5,8 @@ import {
   renderStatusBadge,
 } from './api.js';
 import { WebcamController } from './webcam.js';
-import { loadFaceModels, detectFaceWithDetails } from './face.js';
+import { loadFaceModels, loadBlinkModel } from './face.js';
+import { verifyDynamicChallenge } from './faceChallenge.js';
 
 const webcam = new WebcamController();
 
@@ -36,9 +37,12 @@ const alertMsg = document.getElementById('attendanceAlertMsg');
 
 let capturedBlob = null;
 let capturedDescriptor = null;
+let capturedLiveness = null;
+let capturedFaceEvidence = null;
 let capturedPreviewUrl = null;
 let todayStatus = 'NOT_CHECKED_IN';
 let isSubmitting = false;
+let isCapturing = false;
 
 function showAlert(type, message) {
   alertBox.className = `alert alert-${type}`;
@@ -78,9 +82,9 @@ function updateCameraControls() {
     cameraStageEl.classList.toggle('is-live', active && !hasPhoto);
   }
 
-  startCameraBtn.disabled = active || isSubmitting;
-  stopCameraBtn.disabled = !active || isSubmitting;
-  capturePhotoBtn.disabled = !active || hasPhoto || isSubmitting;
+  startCameraBtn.disabled = active || isSubmitting || isCapturing;
+  stopCameraBtn.disabled = !active || isSubmitting || isCapturing;
+  capturePhotoBtn.disabled = !active || hasPhoto || isSubmitting || isCapturing;
   retakePhotoBtn.hidden = !hasPhoto;
   retakePhotoBtn.disabled = isSubmitting;
 
@@ -108,6 +112,8 @@ startCameraBtn.addEventListener('click', async () => {
   clearAlert();
   revokePreviewUrl();
   capturedBlob = null;
+  capturedLiveness = null;
+  capturedFaceEvidence = null;
   previewEl.hidden = true;
   setCameraLabel('Đang xin quyền camera...');
 
@@ -137,58 +143,27 @@ stopCameraBtn.addEventListener('click', () => {
 });
 
 capturePhotoBtn.addEventListener('click', async () => {
+  if (isCapturing) return;
+  isCapturing = true;
+  updateCameraControls();
   clearAlert();
+  capturedLiveness = null;
   try {
-    setCameraLabel('Đang kiểm tra tính sống (Liveness)...');
-    showAlert('info', '👀 Vui lòng CHỚP MẮT hoặc CỬ ĐỘNG NHẸ ĐẦU trước camera để kiểm tra người thật...');
-    await loadFaceModels();
-
-    // Thẩm định tính sống Liveness trong 3.5 giây trước khi cho phép chụp chấm công
-    const startTime = Date.now();
-    let detectedBlink = false;
-    let eyeClosedOnce = false;
-    let minEAR = 1.0;
-    let maxEAR = 0.0;
-    let initialYaw = null;
-    let maxYawDiff = 0.0;
-    let finalFaceData = null;
-    let framesCount = 0;
-
-    while (Date.now() - startTime < 3500) {
-      const faceData = await detectFaceWithDetails(videoEl);
-      if (faceData) {
-        framesCount++;
-        finalFaceData = faceData;
-
-        minEAR = Math.min(minEAR, faceData.ear);
-        maxEAR = Math.max(maxEAR, faceData.ear);
-
-        if (faceData.ear < 0.24) eyeClosedOnce = true;
-        if (eyeClosedOnce && faceData.ear > 0.26) detectedBlink = true;
-
-        if (initialYaw === null) initialYaw = faceData.yawRatio;
-        else {
-          const diff = Math.abs(faceData.yawRatio - initialYaw);
-          if (diff > maxYawDiff) maxYawDiff = diff;
-        }
-
-        if (detectedBlink || maxYawDiff > 0.25) break;
-      }
-      await new Promise((r) => setTimeout(r, 60));
-    }
-
-    if (framesCount < 5 || !finalFaceData) {
-      throw new Error('Không phát hiện được khuôn mặt rõ ràng trong khung hình. Vui lòng căn giữa mặt và đủ ánh sáng.');
-    }
-
-    // Kiểm tra chống ảnh tĩnh 2D / màn hình điện thoại tĩnh giơ lên
-    const earDiff = maxEAR - minEAR;
-    const isRealPerson = detectedBlink || (earDiff >= 0.06) || (maxYawDiff >= 0.25);
-    if (!isRealPerson) {
-      throw new Error('⚠️ CẢNH BÁO GIẢ MẠO: Phát hiện ảnh in/màn hình tĩnh (không có cử động hoặc chớp mắt). Từ chối chấm công!');
-    }
-
-    capturedDescriptor = finalFaceData.descriptor;
+    const challengeResponse = await apiRequest('/api/v1/attendance/liveness-challenge');
+    const challenge = challengeResponse.data;
+    setCameraLabel('Đang chuẩn bị thử thách khuôn mặt...');
+    showAlert('info', '👀 Vui lòng nhìn thẳng vào camera và chớp mắt tự nhiên 2 lần để thực hiện thử thách...');
+    await Promise.all([loadFaceModels(), loadBlinkModel()]);
+    const challengeStatus = {
+      set textContent(message) { setCameraLabel(message); },
+    };
+    const verification = await verifyDynamicChallenge(videoEl, challengeStatus, { challengeId: 'blink' });
+    capturedDescriptor = verification.descriptor;
+    capturedFaceEvidence = verification.evidence;
+    capturedLiveness = {
+      nonce: challenge.nonce,
+      challengeId: challenge.challengeId,
+    };
 
     const result = await webcam.capturePhoto(videoEl, canvasEl);
     revokePreviewUrl();
@@ -198,12 +173,15 @@ capturePhotoBtn.addEventListener('click', async () => {
     previewEl.hidden = false;
     videoEl.hidden = true;
     placeholderEl.hidden = true;
-    setCameraLabel('Đã xác thực người thật');
-    showAlert('success', '✅ Đã xác thực thực thể sống & khuôn mặt! Bấm Chấm công vào/ra để hoàn tất.');
+    setCameraLabel('Đã hoàn thành thử thách');
+    showAlert('success', '✅ Đã hoàn thành thử thách khuôn mặt. Bấm Chấm công vào/ra để hoàn tất.');
   } catch (err) {
+    capturedLiveness = null;
+    capturedFaceEvidence = null;
     showAlert('error', err.message);
     setCameraLabel('Chụp ảnh thất bại');
   } finally {
+    isCapturing = false;
     updateCameraControls();
   }
 });
@@ -213,6 +191,8 @@ retakePhotoBtn.addEventListener('click', async () => {
   revokePreviewUrl();
   capturedBlob = null;
   capturedDescriptor = null;
+  capturedLiveness = null;
+  capturedFaceEvidence = null;
   previewEl.hidden = true;
 
   if (!webcam.isActive()) {
@@ -248,6 +228,11 @@ async function submitAttendance(type) {
     if (capturedDescriptor) {
       formData.append('faceDescriptor', JSON.stringify(capturedDescriptor));
     }
+    if (capturedLiveness) {
+      formData.append('livenessNonce', capturedLiveness.nonce);
+      formData.append('livenessChallenge', capturedLiveness.challengeId);
+    }
+    if (capturedFaceEvidence) formData.append('faceEvidence', JSON.stringify(capturedFaceEvidence));
 
     const endpoint =
       type === 'check-in'
@@ -263,6 +248,8 @@ async function submitAttendance(type) {
     revokePreviewUrl();
     capturedBlob = null;
     capturedDescriptor = null;
+    capturedLiveness = null;
+    capturedFaceEvidence = null;
     previewEl.hidden = true;
     webcam.stop(videoEl);
     videoEl.hidden = true;
