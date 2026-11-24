@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Đăng nhập — AttendCam</title>
+  <link rel="stylesheet" href="/css/global.css">
+  <link rel="stylesheet" href="/css/auth.css">
+</head>
+<body>
+  <main class="auth-layout">
+    <section class="auth-brand-panel" aria-label="Giới thiệu AttendCam">
+      <div class="auth-brand-row">
+        <div class="brand-mark" aria-hidden="true">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 8V6a2 2 0 0 1 2-2h2"/>
+            <path d="M4 16v2a2 2 0 0 0 2 2h2"/>
+            <path d="M16 4h2a2 2 0 0 1 2 2v2"/>
+            <path d="M16 20h2a2 2 0 0 0 2-2v-2"/>
+            <path d="M8.5 9.5h7a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 7 15v-4a1.5 1.5 0 0 1 1.5-1.5z"/>
+            <circle cx="12" cy="13" r="1.8"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-name">AttendCam</h1>
+          <p class="brand-tagline">Hệ thống chấm công bằng Webcam</p>
+        </div>
+      </div>
+
+      <div class="brand-accent-bar" aria-hidden="true"></div>
+      <p class="auth-brand-meta">
+        Cổng chấm công nội bộ xác thực phiên an toàn &bull; Asia/Ho_Chi_Minh
+      </p>
+    </section>
+
+    <section class="auth-form-panel" aria-label="Đăng nhập nhân viên">
+      <div class="auth-card">
+        <div class="auth-card-header">
+          <h2>Đăng nhập</h2>
+          <p>Vui lòng đăng nhập để tiếp tục</p>
+        </div>
+        <div class="face-camera"><video id="faceVideo" autoplay muted playsinline></video><div class="face-guide" aria-hidden="true"></div></div>
+        <p id="faceStatus">Cho phép camera, sau đó quay đầu trái rồi phải để kiểm tra trực tiếp.</p>
+
+        <div id="loginAlert" class="alert alert-error" role="alert" aria-live="polite" style="margin-bottom: 16px;" hidden>
+          <svg class="alert-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <span id="loginAlertMessage"></span>
+        </div>
+
+        <form id="loginForm" novalidate>
+          <div class="form-group">
+            <label class="sr-only" for="identifier">Email hoặc Mã nhân viên</label>
+            <div class="input-wrapper">
+              <span class="input-icon" aria-hidden="true">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="4" width="20" height="16" rx="2"/>
+                  <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+                </svg>
+              </span>
+              <input
+                id="identifier"
+                name="identifier"
+                type="text"
+                class="form-input"
+                placeholder="Email hoặc Mã nhân viên"
+                autocomplete="username"
+                required
+              >
+            </div>
+            <div id="identifierError" class="field-error" aria-live="polite"></div>
+          </div>
+
+          <div class="form-group">
+            <label class="sr-only" for="password">Mật khẩu</label>
+            <div class="input-wrapper">
+              <span class="input-icon" aria-hidden="true">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+              </span>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                class="form-input has-toggle"
+                placeholder="Mật khẩu"
+                autocomplete="current-password"
+                required
+              >
+              <button
+                type="button"
+                id="togglePasswordBtn"
+                class="password-toggle"
+                aria-label="Hiện mật khẩu"
+                aria-pressed="false"
+              >
+                <svg id="eyeIcon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+              </button>
+            </div>
+            <div id="passwordError" class="field-error" aria-live="polite"></div>
+          </div>
+
+          <div class="form-options">
+            <label class="checkbox-label">
+              <input type="checkbox" id="rememberMe" name="rememberMe">
+              <span>Ghi nhớ đăng nhập</span>
+            </label>
+          </div>
+
+          <button type="submit" id="loginSubmitBtn" class="btn btn-primary auth-submit-btn">
+            <span id="loginBtnSpinner" class="spinner" hidden></span>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+              <polyline points="10 17 15 12 10 7"/>
+              <line x1="15" y1="12" x2="3" y2="12"/>
+            </svg>
+            <span id="loginBtnText">Đăng nhập</span>
+          </button>
+        </form>
+        <a class="register-link" href="/register">Đăng ký tài khoản</a>
+
+        <div class="auth-note">
+          Bảo vệ bởi HttpOnly Session Cookies &amp; CSRF Token
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/js/auth.js"></script>
+</body>
+</html>
