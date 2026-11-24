@@ -57,10 +57,21 @@ class AuthService {
     const passwordOk = await bcrypt.compare(password, hash);
     if (!employee || !passwordOk) throw new AppError(401, 'INVALID_CREDENTIALS', 'Invalid employee ID/email or password.');
     let enrolled;
-    try { enrolled = JSON.parse(employee.face_descriptor || 'null'); } catch { enrolled = null; }
-    if (!enrolled || !Array.isArray(descriptor) || descriptor.length !== 128) throw new AppError(401, 'FACE_NOT_ENROLLED', 'Face verification is required.');
+    try {
+      enrolled = typeof employee.face_descriptor === 'string'
+        ? JSON.parse(employee.face_descriptor || 'null')
+        : employee.face_descriptor;
+    } catch {
+      enrolled = null;
+    }
+    if (!enrolled || !Array.isArray(descriptor) || descriptor.length !== 128) {
+      throw new AppError(401, 'FACE_NOT_ENROLLED', 'Tài khoản chưa có dữ liệu khuôn mặt hoặc khuôn mặt không hợp lệ.');
+    }
     const distance = Math.sqrt(enrolled.reduce((sum, value, index) => sum + (value - descriptor[index]) ** 2, 0));
-    if (distance > 0.48) throw new AppError(401, 'FACE_MISMATCH', 'Face verification failed.');
+    // Ngưỡng so khớp Euclidean distance (thông thường từ 0.50 - 0.55 cho model 128-D)
+    if (distance > 0.55) {
+      throw new AppError(401, 'FACE_MISMATCH', `Khuôn mặt không khớp với tài khoản đã đăng ký (Khoảng cách: ${distance.toFixed(3)}).`);
+    }
     return toPublicEmployee(employee);
   }
 

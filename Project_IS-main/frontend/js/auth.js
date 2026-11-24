@@ -1,5 +1,5 @@
 import { apiRequest, ensureCsrfToken, setCsrfToken } from './api.js';
-import { captureFace } from './face.js';
+import { loadFaceModels, captureFace } from './face.js';
 
 const loginForm = document.getElementById('loginForm');
 const identifierInput = document.getElementById('identifier');
@@ -16,13 +16,36 @@ const identifierError = document.getElementById('identifierError');
 const passwordError = document.getElementById('passwordError');
 const faceVideo = document.getElementById('faceVideo');
 const faceStatus = document.getElementById('faceStatus');
+
 let cameraStream;
-try { cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false }); faceVideo.srcObject = cameraStream; await faceVideo.play(); } catch { if (faceStatus) faceStatus.textContent = 'Webcam bat buoc; hay cap quyen camera.'; }
+
+// Khởi tạo camera và nạp sẵn AI model
+(async function init() {
+  try {
+    if (faceStatus) faceStatus.textContent = 'Đang mở webcam...';
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false,
+    });
+    faceVideo.srcObject = cameraStream;
+    await faceVideo.play();
+
+    if (faceStatus) faceStatus.textContent = 'Đang nạp mô hình nhận diện khuôn mặt...';
+    await loadFaceModels();
+    if (faceStatus) faceStatus.textContent = 'Webcam sẵn sàng. Nhập thông tin và bấm Đăng nhập.';
+  } catch (err) {
+    console.error(err);
+    if (faceStatus) {
+      faceStatus.textContent = 'Webcam bắt buộc: ' + (err.message || 'Hãy cấp quyền truy cập camera.');
+      faceStatus.style.color = '#c0392b';
+    }
+  }
+})();
 
 function setLoading(isLoading) {
   loginSubmitBtn.disabled = isLoading;
   loginBtnSpinner.hidden = !isLoading;
-  loginBtnText.textContent = isLoading ? 'Đang đăng nhập...' : 'Đăng nhập';
+  loginBtnText.textContent = isLoading ? 'Đang xác thực...' : 'Đăng nhập';
 }
 
 function showFormError(message) {
@@ -74,13 +97,27 @@ loginForm.addEventListener('submit', async (event) => {
 
   setLoading(true);
   try {
-    if (!cameraStream) throw new Error('Khong the mo webcam. Hay cap quyen camera.');
-    if (faceStatus) faceStatus.textContent = 'Quay mat sang trai, sau do sang phai...';
+    if (!cameraStream) throw new Error('Không thể mở webcam. Vui lòng cấp quyền truy cập camera.');
+
+    if (faceStatus) {
+      faceStatus.textContent = 'Đang kiểm tra liveness (quay nhẹ đầu sang trái hoặc phải)...';
+      faceStatus.style.color = '#a87545';
+    }
+
     const before = await captureFace(faceVideo);
-    await new Promise((resolve) => setTimeout(resolve, 900));
+    await new Promise((resolve) => setTimeout(resolve, 800));
     const after = await captureFace(faceVideo);
+
     const movement = Math.sqrt(before.reduce((sum, value, index) => sum + (value - after[index]) ** 2, 0));
-    if (movement < 0.08) throw new Error('Thu thach chuyen dong khong dat. Hay quay dau trai va phai truoc camera.');
+    if (movement < 0.05) {
+      throw new Error('Thử thách chống giả mạo không đạt: Hãy cử động hoặc quay nhẹ đầu trước camera (Không dùng ảnh tĩnh).');
+    }
+
+    if (faceStatus) {
+      faceStatus.textContent = 'Liveness đạt! Đang so khớp danh tính với dữ liệu đăng ký...';
+      faceStatus.style.color = '#27ae60';
+    }
+
     const response = await apiRequest('/api/v1/auth/face-login', {
       method: 'POST',
       body: { identifier, password, rememberMe, faceDescriptor: after, liveness: 'turn-left-right' },
@@ -96,6 +133,10 @@ loginForm.addEventListener('submit', async (event) => {
       setCsrfToken(null);
     }
     showFormError(err.message || 'Đăng nhập thất bại. Vui lòng thử lại.');
+    if (faceStatus) {
+      faceStatus.textContent = err.message || 'Đăng nhập thất bại.';
+      faceStatus.style.color = '#c0392b';
+    }
   } finally {
     setLoading(false);
   }

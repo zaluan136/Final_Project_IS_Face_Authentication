@@ -1,11 +1,75 @@
 import { apiRequest } from './api.js';
-import { captureFace } from './face.js';
+import { loadFaceModels, captureFace } from './face.js';
+
 const video = document.getElementById('registerVideo');
 const status = document.getElementById('registerStatus');
-try { video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false }); await video.play(); status.textContent = 'Can giua mat trong khung hinh.'; } catch { status.textContent = 'Khong mo duoc webcam. Hay cap quyen camera.'; }
+const message = document.getElementById('registerMessage');
+const submitBtn = document.querySelector('#registerForm button[type="submit"]');
+
+let cameraStream = null;
+
+// Khởi tạo camera và nạp sẵn AI model để người dùng không phải chờ lâu khi bấm gửi
+(async function init() {
+  try {
+    status.textContent = 'Đang mở webcam...';
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false,
+    });
+    video.srcObject = cameraStream;
+    await video.play();
+
+    status.textContent = 'Đang tải mô hình nhận diện khuôn mặt AI...';
+    await loadFaceModels();
+    status.textContent = 'Sẵn sàng: Hãy căn mặt ngay ngắn vào khung hình và bấm Quét mặt.';
+  } catch (err) {
+    console.error(err);
+    status.textContent = 'Lỗi camera hoặc tải model: ' + (err.message || 'Kiểm tra quyền truy cập camera.');
+    status.style.color = '#c0392b';
+  }
+})();
+
 document.getElementById('registerForm').addEventListener('submit', async (event) => {
-  event.preventDefault(); const message = document.getElementById('registerMessage'); message.textContent = 'Dang quet va dang ky...';
-  try { const faceDescriptor = await captureFace(video); const values = Object.fromEntries(new FormData(event.currentTarget)); await apiRequest('/api/v1/auth/register', { method: 'POST', body: { ...values, faceDescriptor } }); message.textContent = 'Dang ky thanh cong. Chuyen den dang nhap...'; setTimeout(() => location.assign('/login'), 900); }
-  catch (err) { message.textContent = err.message; }
+  event.preventDefault();
+  message.textContent = '';
+  message.style.color = '';
+
+  if (!video.videoWidth || video.paused || video.ended) {
+    message.textContent = 'Webcam chưa sẵn sàng. Vui lòng kiểm tra lại camera.';
+    message.style.color = '#c0392b';
+    return;
+  }
+
+  submitBtn.disabled = true;
+  const originalBtnText = submitBtn.textContent;
+  submitBtn.textContent = 'Đang quét khuôn mặt...';
+  message.textContent = 'Đang phân tích đặc trưng khuôn mặt (128-D vector)...';
+
+  try {
+    const faceDescriptor = await captureFace(video);
+
+    message.textContent = 'Đã quét xong khuôn mặt! Đang gửi thông tin tạo tài khoản...';
+    const formElement = document.getElementById('registerForm');
+    const formData = new FormData(formElement);
+    const values = Object.fromEntries(formData.entries());
+
+    await apiRequest('/api/v1/auth/register', {
+      method: 'POST',
+      body: { ...values, faceDescriptor },
+    });
+
+    message.textContent = 'Đăng ký thành công! Đang chuyển hướng về trang đăng nhập...';
+    message.style.color = '#27ae60';
+    setTimeout(() => location.assign('/login'), 1200);
+  } catch (err) {
+    console.error('Lỗi đăng ký:', err);
+    message.textContent = err.message || 'Đăng ký thất bại. Vui lòng thử lại.';
+    message.style.color = '#c0392b';
+    submitBtn.disabled = false;
+    submitBtn.textContent = originalBtnText;
+  }
 });
-window.addEventListener('pagehide', () => video.srcObject?.getTracks().forEach((track) => track.stop()));
+
+window.addEventListener('pagehide', () => {
+  cameraStream?.getTracks().forEach((track) => track.stop());
+});

@@ -56,11 +56,11 @@ function createApp(overrides = {}) {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-eval'"],
           styleSrc: ["'self'", "'unsafe-inline'"],
           imgSrc: ["'self'", 'data:', 'blob:'],
           mediaSrc: ["'self'", 'blob:'],
-          connectSrc: ["'self'"],
+          connectSrc: ["'self'", 'data:', 'blob:'],
           objectSrc: ["'none'"],
           frameAncestors: ["'none'"],
         },

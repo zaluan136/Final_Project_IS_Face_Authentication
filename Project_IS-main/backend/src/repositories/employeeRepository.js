@@ -6,7 +6,7 @@ class EmployeeRepository {
   constructor(db) {
     this.db = db;
     this.findByIdentifierStmt = db.prepare(
-      `SELECT id, employee_code, full_name, email, password_hash, department, role, status, created_at
+      `SELECT id, employee_code, full_name, email, password_hash, face_descriptor, department, role, status, created_at
        FROM employees
        WHERE LOWER(employee_code) = LOWER(?) OR LOWER(email) = LOWER(?)
        LIMIT 1`
