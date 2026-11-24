@@ -139,13 +139,56 @@ stopCameraBtn.addEventListener('click', () => {
 capturePhotoBtn.addEventListener('click', async () => {
   clearAlert();
   try {
-    setCameraLabel('Đang nhận diện khuôn mặt...');
+    setCameraLabel('Đang kiểm tra tính sống (Liveness)...');
+    showAlert('info', '👀 Vui lòng CHỚP MẮT hoặc CỬ ĐỘNG NHẸ ĐẦU trước camera để kiểm tra người thật...');
     await loadFaceModels();
-    const faceData = await detectFaceWithDetails(videoEl);
-    if (!faceData) {
+
+    // Thẩm định tính sống Liveness trong 3.5 giây trước khi cho phép chụp chấm công
+    const startTime = Date.now();
+    let detectedBlink = false;
+    let eyeClosedOnce = false;
+    let minEAR = 1.0;
+    let maxEAR = 0.0;
+    let initialYaw = null;
+    let maxYawDiff = 0.0;
+    let finalFaceData = null;
+    let framesCount = 0;
+
+    while (Date.now() - startTime < 3500) {
+      const faceData = await detectFaceWithDetails(videoEl);
+      if (faceData) {
+        framesCount++;
+        finalFaceData = faceData;
+
+        minEAR = Math.min(minEAR, faceData.ear);
+        maxEAR = Math.max(maxEAR, faceData.ear);
+
+        if (faceData.ear < 0.24) eyeClosedOnce = true;
+        if (eyeClosedOnce && faceData.ear > 0.26) detectedBlink = true;
+
+        if (initialYaw === null) initialYaw = faceData.yawRatio;
+        else {
+          const diff = Math.abs(faceData.yawRatio - initialYaw);
+          if (diff > maxYawDiff) maxYawDiff = diff;
+        }
+
+        if (detectedBlink || maxYawDiff > 0.25) break;
+      }
+      await new Promise((r) => setTimeout(r, 60));
+    }
+
+    if (framesCount < 5 || !finalFaceData) {
       throw new Error('Không phát hiện được khuôn mặt rõ ràng trong khung hình. Vui lòng căn giữa mặt và đủ ánh sáng.');
     }
-    capturedDescriptor = faceData.descriptor;
+
+    // Kiểm tra chống ảnh tĩnh 2D / màn hình điện thoại tĩnh giơ lên
+    const earDiff = maxEAR - minEAR;
+    const isRealPerson = detectedBlink || (earDiff >= 0.06) || (maxYawDiff >= 0.25);
+    if (!isRealPerson) {
+      throw new Error('⚠️ CẢNH BÁO GIẢ MẠO: Phát hiện ảnh in/màn hình tĩnh (không có cử động hoặc chớp mắt). Từ chối chấm công!');
+    }
+
+    capturedDescriptor = finalFaceData.descriptor;
 
     const result = await webcam.capturePhoto(videoEl, canvasEl);
     revokePreviewUrl();
@@ -155,8 +198,8 @@ capturePhotoBtn.addEventListener('click', async () => {
     previewEl.hidden = false;
     videoEl.hidden = true;
     placeholderEl.hidden = true;
-    setCameraLabel('Đã quét khuôn mặt thành công');
-    showAlert('info', 'Đã trích xuất đặc trưng khuôn mặt! Vui lòng bấm Chấm công vào/ra để hoàn tất.');
+    setCameraLabel('Đã xác thực người thật');
+    showAlert('success', '✅ Đã xác thực thực thể sống & khuôn mặt! Bấm Chấm công vào/ra để hoàn tất.');
   } catch (err) {
     showAlert('error', err.message);
     setCameraLabel('Chụp ảnh thất bại');

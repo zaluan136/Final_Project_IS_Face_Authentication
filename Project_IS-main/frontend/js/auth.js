@@ -85,14 +85,12 @@ ensureCsrfToken().catch(() => {
 async function verifyDynamicChallenge(video, statusElem, challenge) {
   const { challengeId, instruction } = challenge;
   const startTime = Date.now();
-  const maxDurationMs = 5000; // Người dùng có 5 giây để thực hiện thử thách
+  const maxDurationMs = 7000; // Tăng lên 7 giây để người dùng thoải mái thực hiện chuỗi hành động
 
   let blinkCount = 0;
   let eyeClosedOnce = false;
   let turnedLeft = false;
   let turnedRight = false;
-  let minEAR = 1.0;
-  let maxEAR = 0.0;
   let initialYaw = null;
   let lastDescriptor = null;
   let framesCount = 0;
@@ -108,26 +106,45 @@ async function verifyDynamicChallenge(video, statusElem, challenge) {
       framesCount++;
       lastDescriptor = data.descriptor;
 
-      minEAR = Math.min(minEAR, data.ear);
-      maxEAR = Math.max(maxEAR, data.ear);
+      if (initialYaw === null) {
+        initialYaw = data.yawRatio;
+      }
 
-      // 1. Nhận diện nhịp chớp mắt sinh học
-      if (data.ear < 0.22) {
+      // 1. Nhận diện nhịp chớp mắt sinh học (ngưỡng nhạy hơn: nhắm < 0.245, mở lại > 0.26)
+      if (data.ear < 0.245) {
         eyeClosedOnce = true;
       }
-      if (eyeClosedOnce && data.ear > 0.27) {
+      if (eyeClosedOnce && data.ear > 0.26) {
         blinkCount++;
         eyeClosedOnce = false;
       }
 
       // 2. Nhận diện góc quay đầu:
-      // data.yawRatio < 0.65 là quay sang trái
-      // data.yawRatio > 1.55 là quay sang phải
-      if (data.yawRatio < 0.65) {
+      // Kết hợp cả ngưỡng tuyệt đối (0.75 / 1.35) và độ lệch tương đối so với lúc đầu (diff >= 0.25)
+      // Do video có transform scaleX(-1), quay bên nào thì tỉ lệ phản ánh đúng bên đó
+      const yawDelta = data.yawRatio - initialYaw;
+      if (data.yawRatio < 0.75 || yawDelta < -0.25) {
         turnedLeft = true;
       }
-      if (data.yawRatio > 1.55) {
+      if (data.yawRatio > 1.35 || yawDelta > 0.25) {
         turnedRight = true;
+      }
+
+      // Cập nhật trạng thái tiến độ thời gian thực để người dùng biết mình đã làm được bước nào
+      if (statusElem) {
+        let progressMsg = instruction;
+        if (challengeId === 'turn-left-blink') {
+          progressMsg = `[1/2] Quay trái: ${turnedLeft ? '✅' : '⏳'} | [2/2] Chớp mắt: ${blinkCount >= 1 ? '✅' : '⏳'}`;
+        } else if (challengeId === 'turn-right-blink') {
+          progressMsg = `[1/2] Quay phải: ${turnedRight ? '✅' : '⏳'} | [2/2] Chớp mắt: ${blinkCount >= 1 ? '✅' : '⏳'}`;
+        } else if (challengeId === 'blink') {
+          progressMsg = `Đã chớp mắt: ${blinkCount}/2 lần ${blinkCount >= 2 ? '✅' : ''}`;
+        } else if (challengeId === 'turn-left') {
+          progressMsg = `Quay trái: ${turnedLeft ? '✅' : '⏳ Đang nhận...'}`;
+        } else if (challengeId === 'turn-right') {
+          progressMsg = `Quay phải: ${turnedRight ? '✅' : '⏳ Đang nhận...'}`;
+        }
+        statusElem.textContent = `🎯 ${progressMsg}`;
       }
 
       // Kiểm tra thỏa mãn điều kiện theo từng kịch bản ngẫu nhiên
