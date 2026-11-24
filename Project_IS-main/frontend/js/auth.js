@@ -1,5 +1,5 @@
 import { apiRequest, ensureCsrfToken, setCsrfToken } from './api.js';
-import { loadFaceModels, captureFace } from './face.js';
+import { loadFaceModels, detectFaceWithDetails } from './face.js';
 
 const loginForm = document.getElementById('loginForm');
 const identifierInput = document.getElementById('identifier');
@@ -76,6 +76,73 @@ ensureCsrfToken().catch(() => {
   // Token will be fetched on submit if initial prefetch fails
 });
 
+// Kiểm tra liveness bằng nhịp chớp mắt (EAR) hoặc quay đầu tự nhiên
+async function verifyLiveness(video, statusElem) {
+  const startTime = Date.now();
+  const maxDurationMs = 4000; // Tối đa 4 giây
+  let detectedBlink = false;
+  let eyeClosedOnce = false;
+  let minEAR = 1.0;
+  let maxEAR = 0.0;
+  let initialYaw = null;
+  let maxYawDiff = 0.0;
+  let lastDescriptor = null;
+  let framesCount = 0;
+
+  if (statusElem) {
+    statusElem.textContent = '👀 ĐANG KIỂM TRA LIVENESS: Vui lòng CHỚP MẮT hoặc quay nhẹ đầu...';
+    statusElem.style.color = '#a87545';
+  }
+
+  while (Date.now() - startTime < maxDurationMs) {
+    const data = await detectFaceWithDetails(video);
+    if (data) {
+      framesCount++;
+      lastDescriptor = data.descriptor;
+
+      minEAR = Math.min(minEAR, data.ear);
+      maxEAR = Math.max(maxEAR, data.ear);
+
+      // Khi chớp mắt thật: EAR tụt sâu (< 0.23) rồi mở lại (> 0.28)
+      if (data.ear < 0.23) {
+        eyeClosedOnce = true;
+      }
+      if (eyeClosedOnce && data.ear > 0.27) {
+        detectedBlink = true;
+      }
+
+      // Theo dõi quay đầu thật: tỉ lệ khoảng cách mũi - má thay đổi
+      if (initialYaw === null) {
+        initialYaw = data.yawRatio;
+      } else {
+        const diff = Math.abs(data.yawRatio - initialYaw);
+        if (diff > maxYawDiff) maxYawDiff = diff;
+      }
+
+      // Nếu đã phát hiện chớp mắt hoặc quay đầu rõ ràng
+      if (detectedBlink || maxYawDiff > 0.35) {
+        break;
+      }
+    }
+    await new Promise((r) => setTimeout(r, 60));
+  }
+
+  if (framesCount < 5 || !lastDescriptor) {
+    throw new Error('Không phát hiện được khuôn mặt rõ ràng trong khung hình.');
+  }
+
+  // Đánh giá liveness:
+  // Nếu là ảnh tĩnh/điện thoại: EAR không co giãn (maxEAR - minEAR < 0.06) và không quay đầu
+  const earDiff = maxEAR - minEAR;
+  const isRealPerson = detectedBlink || (earDiff >= 0.07) || (maxYawDiff >= 0.28);
+
+  if (!isRealPerson) {
+    throw new Error('⚠️ CẢNH BÁO GIẢ MẠO (SPOOFING DETECTED): Phát hiện ảnh chụp/màn hình tĩnh (không có nhịp chớp mắt hoặc cử động tự nhiên). Từ chối truy cập!');
+  }
+
+  return lastDescriptor;
+}
+
 loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   clearErrors();
@@ -99,28 +166,17 @@ loginForm.addEventListener('submit', async (event) => {
   try {
     if (!cameraStream) throw new Error('Không thể mở webcam. Vui lòng cấp quyền truy cập camera.');
 
-    if (faceStatus) {
-      faceStatus.textContent = 'Đang kiểm tra liveness (quay nhẹ đầu sang trái hoặc phải)...';
-      faceStatus.style.color = '#a87545';
-    }
-
-    const before = await captureFace(faceVideo);
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    const after = await captureFace(faceVideo);
-
-    const movement = Math.sqrt(before.reduce((sum, value, index) => sum + (value - after[index]) ** 2, 0));
-    if (movement < 0.05) {
-      throw new Error('Thử thách chống giả mạo không đạt: Hãy cử động hoặc quay nhẹ đầu trước camera (Không dùng ảnh tĩnh).');
-    }
+    // Thực hiện kiểm tra tính sống chống ảnh tĩnh
+    const faceDescriptor = await verifyLiveness(faceVideo, faceStatus);
 
     if (faceStatus) {
-      faceStatus.textContent = 'Liveness đạt! Đang so khớp danh tính với dữ liệu đăng ký...';
+      faceStatus.textContent = '✅ Liveness đạt! Đang so khớp danh tính với khuôn mặt đã đăng ký...';
       faceStatus.style.color = '#27ae60';
     }
 
     const response = await apiRequest('/api/v1/auth/face-login', {
       method: 'POST',
-      body: { identifier, password, rememberMe, faceDescriptor: after, liveness: 'turn-left-right' },
+      body: { identifier, password, rememberMe, faceDescriptor, liveness: 'turn-left-right' },
     });
 
     if (response?.data?.csrfToken) {
