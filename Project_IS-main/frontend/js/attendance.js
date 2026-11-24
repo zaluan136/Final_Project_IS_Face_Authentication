@@ -5,6 +5,7 @@ import {
   renderStatusBadge,
 } from './api.js';
 import { WebcamController } from './webcam.js';
+import { loadFaceModels, detectFaceWithDetails } from './face.js';
 
 const webcam = new WebcamController();
 
@@ -34,6 +35,7 @@ const alertBox = document.getElementById('attendanceAlert');
 const alertMsg = document.getElementById('attendanceAlertMsg');
 
 let capturedBlob = null;
+let capturedDescriptor = null;
 let capturedPreviewUrl = null;
 let todayStatus = 'NOT_CHECKED_IN';
 let isSubmitting = false;
@@ -137,6 +139,14 @@ stopCameraBtn.addEventListener('click', () => {
 capturePhotoBtn.addEventListener('click', async () => {
   clearAlert();
   try {
+    setCameraLabel('Đang nhận diện khuôn mặt...');
+    await loadFaceModels();
+    const faceData = await detectFaceWithDetails(videoEl);
+    if (!faceData) {
+      throw new Error('Không phát hiện được khuôn mặt rõ ràng trong khung hình. Vui lòng căn giữa mặt và đủ ánh sáng.');
+    }
+    capturedDescriptor = faceData.descriptor;
+
     const result = await webcam.capturePhoto(videoEl, canvasEl);
     revokePreviewUrl();
     capturedBlob = result.blob;
@@ -145,9 +155,11 @@ capturePhotoBtn.addEventListener('click', async () => {
     previewEl.hidden = false;
     videoEl.hidden = true;
     placeholderEl.hidden = true;
-    setCameraLabel('Đã chụp ảnh');
+    setCameraLabel('Đã quét khuôn mặt thành công');
+    showAlert('info', 'Đã trích xuất đặc trưng khuôn mặt! Vui lòng bấm Chấm công vào/ra để hoàn tất.');
   } catch (err) {
     showAlert('error', err.message);
+    setCameraLabel('Chụp ảnh thất bại');
   } finally {
     updateCameraControls();
   }
@@ -157,6 +169,7 @@ retakePhotoBtn.addEventListener('click', async () => {
   clearAlert();
   revokePreviewUrl();
   capturedBlob = null;
+  capturedDescriptor = null;
   previewEl.hidden = true;
 
   if (!webcam.isActive()) {
@@ -189,6 +202,9 @@ async function submitAttendance(type) {
   try {
     const formData = new FormData();
     formData.append('photo', capturedBlob, `${type}.jpg`);
+    if (capturedDescriptor) {
+      formData.append('faceDescriptor', JSON.stringify(capturedDescriptor));
+    }
 
     const endpoint =
       type === 'check-in'
@@ -203,6 +219,7 @@ async function submitAttendance(type) {
     showAlert('success', response.message || 'Ghi nhận chấm công thành công.');
     revokePreviewUrl();
     capturedBlob = null;
+    capturedDescriptor = null;
     previewEl.hidden = true;
     webcam.stop(videoEl);
     videoEl.hidden = true;

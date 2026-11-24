@@ -32,7 +32,7 @@ function createApp(overrides = {}) {
   const attendanceRepo = new AttendanceRepository(db);
   const authService = new AuthService(employeeRepo);
   const evidenceService = new EvidenceService(env.evidenceDir);
-  const attendanceService = new AttendanceService(attendanceRepo, evidenceService);
+  const attendanceService = new AttendanceService(attendanceRepo, evidenceService, authService);
 
   const authController = createAuthController(authService, env);
   const attendanceController = createAttendanceController(attendanceService);

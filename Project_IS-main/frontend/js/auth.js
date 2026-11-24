@@ -76,21 +76,29 @@ ensureCsrfToken().catch(() => {
   // Token will be fetched on submit if initial prefetch fails
 });
 
-// Kiểm tra liveness bằng nhịp chớp mắt (EAR) hoặc quay đầu tự nhiên
-async function verifyLiveness(video, statusElem) {
+/**
+ * Thực hiện Active Liveness Challenge - Response theo chỉ định động từ Backend:
+ * Ngăn chặn tuyệt đối Replay Attack (Video quay sẵn hoặc ảnh tĩnh giơ lên):
+ * - Nếu là video quay sẵn: Video chỉ phát hành động cố định, không thể đáp ứng đúng thử thách ngẫu nhiên mà Server vừa tạo.
+ * - Server cấp Session Nonce ngẫu nhiên dùng 1 lần (Single-use token).
+ */
+async function verifyDynamicChallenge(video, statusElem, challenge) {
+  const { challengeId, instruction } = challenge;
   const startTime = Date.now();
-  const maxDurationMs = 4000; // Tối đa 4 giây
-  let detectedBlink = false;
+  const maxDurationMs = 5000; // Người dùng có 5 giây để thực hiện thử thách
+
+  let blinkCount = 0;
   let eyeClosedOnce = false;
+  let turnedLeft = false;
+  let turnedRight = false;
   let minEAR = 1.0;
   let maxEAR = 0.0;
   let initialYaw = null;
-  let maxYawDiff = 0.0;
   let lastDescriptor = null;
   let framesCount = 0;
 
   if (statusElem) {
-    statusElem.textContent = '👀 ĐANG KIỂM TRA LIVENESS: Vui lòng CHỚP MẮT hoặc quay nhẹ đầu...';
+    statusElem.textContent = `🎯 THỬ THÁCH BẢO MẬT: ${instruction}`;
     statusElem.style.color = '#a87545';
   }
 
@@ -103,25 +111,41 @@ async function verifyLiveness(video, statusElem) {
       minEAR = Math.min(minEAR, data.ear);
       maxEAR = Math.max(maxEAR, data.ear);
 
-      // Khi chớp mắt thật: EAR tụt sâu (< 0.23) rồi mở lại (> 0.28)
-      if (data.ear < 0.23) {
+      // 1. Nhận diện nhịp chớp mắt sinh học
+      if (data.ear < 0.22) {
         eyeClosedOnce = true;
       }
       if (eyeClosedOnce && data.ear > 0.27) {
-        detectedBlink = true;
+        blinkCount++;
+        eyeClosedOnce = false;
       }
 
-      // Theo dõi quay đầu thật: tỉ lệ khoảng cách mũi - má thay đổi
-      if (initialYaw === null) {
-        initialYaw = data.yawRatio;
-      } else {
-        const diff = Math.abs(data.yawRatio - initialYaw);
-        if (diff > maxYawDiff) maxYawDiff = diff;
+      // 2. Nhận diện góc quay đầu:
+      // data.yawRatio < 0.65 là quay sang trái
+      // data.yawRatio > 1.55 là quay sang phải
+      if (data.yawRatio < 0.65) {
+        turnedLeft = true;
+      }
+      if (data.yawRatio > 1.55) {
+        turnedRight = true;
       }
 
-      // Nếu đã phát hiện chớp mắt hoặc quay đầu rõ ràng
-      if (detectedBlink || maxYawDiff > 0.35) {
-        break;
+      // Kiểm tra thỏa mãn điều kiện theo từng kịch bản ngẫu nhiên
+      let satisfied = false;
+      if (challengeId === 'blink' && blinkCount >= 2) {
+        satisfied = true;
+      } else if (challengeId === 'turn-left' && turnedLeft) {
+        satisfied = true;
+      } else if (challengeId === 'turn-right' && turnedRight) {
+        satisfied = true;
+      } else if (challengeId === 'turn-left-blink' && turnedLeft && blinkCount >= 1) {
+        satisfied = true;
+      } else if (challengeId === 'turn-right-blink' && turnedRight && blinkCount >= 1) {
+        satisfied = true;
+      }
+
+      if (satisfied) {
+        return lastDescriptor;
       }
     }
     await new Promise((r) => setTimeout(r, 60));
@@ -131,16 +155,7 @@ async function verifyLiveness(video, statusElem) {
     throw new Error('Không phát hiện được khuôn mặt rõ ràng trong khung hình.');
   }
 
-  // Đánh giá liveness:
-  // Nếu là ảnh tĩnh/điện thoại: EAR không co giãn (maxEAR - minEAR < 0.06) và không quay đầu
-  const earDiff = maxEAR - minEAR;
-  const isRealPerson = detectedBlink || (earDiff >= 0.07) || (maxYawDiff >= 0.28);
-
-  if (!isRealPerson) {
-    throw new Error('⚠️ CẢNH BÁO GIẢ MẠO (SPOOFING DETECTED): Phát hiện ảnh chụp/màn hình tĩnh (không có nhịp chớp mắt hoặc cử động tự nhiên). Từ chối truy cập!');
-  }
-
-  return lastDescriptor;
+  throw new Error(`⚠️ CẢNH BÁO GIẢ MẠO / VIDEO PHÁT LẠI: Thử thách không đạt yêu cầu ("${instruction}"). Không dùng ảnh tĩnh hoặc video ghi hình sẵn!`);
 }
 
 loginForm.addEventListener('submit', async (event) => {
@@ -166,17 +181,33 @@ loginForm.addEventListener('submit', async (event) => {
   try {
     if (!cameraStream) throw new Error('Không thể mở webcam. Vui lòng cấp quyền truy cập camera.');
 
-    // Thực hiện kiểm tra tính sống chống ảnh tĩnh
-    const faceDescriptor = await verifyLiveness(faceVideo, faceStatus);
+    // 1. Giai đoạn 1 (Theo báo cáo giữa kỳ): Client yêu cầu Server cấp Session Nonce & Thử thách ngẫu nhiên
+    if (faceStatus) {
+      faceStatus.textContent = 'Đang khởi tạo phiên thử thách bảo mật từ máy chủ...';
+      faceStatus.style.color = '#a87545';
+    }
+    const challengeRes = await apiRequest('/api/v1/auth/liveness-challenge', { method: 'GET' });
+    const challenge = challengeRes.data;
+
+    // 2. Giai đoạn 2: Quét luồng Video & Thẩm định tính sống thời gian thực đối chiếu với thử thách
+    const verifiedDescriptor = await verifyDynamicChallenge(faceVideo, faceStatus, challenge);
 
     if (faceStatus) {
-      faceStatus.textContent = '✅ Liveness đạt! Đang so khớp danh tính với khuôn mặt đã đăng ký...';
+      faceStatus.textContent = '✅ Vượt qua thử thách sống! Đang so khớp danh tính với khuôn mặt đã đăng ký...';
       faceStatus.style.color = '#27ae60';
     }
 
+    // 3. Giai đoạn 3 & 4: Gửi descriptor kèm nonce dùng 1 lần về Server so khớp L2
     const response = await apiRequest('/api/v1/auth/face-login', {
       method: 'POST',
-      body: { identifier, password, rememberMe, faceDescriptor, liveness: 'turn-left-right' },
+      body: {
+        identifier,
+        password,
+        rememberMe,
+        faceDescriptor: verifiedDescriptor,
+        liveness: challenge.challengeId,
+        nonce: challenge.nonce,
+      },
     });
 
     if (response?.data?.csrfToken) {

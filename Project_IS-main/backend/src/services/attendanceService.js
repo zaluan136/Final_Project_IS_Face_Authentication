@@ -24,12 +24,41 @@ function formatAttendanceRecord(row) {
 }
 
 class AttendanceService {
-  constructor(attendanceRepository, evidenceService) {
+  constructor(attendanceRepository, evidenceService, authService = null) {
     this.attendanceRepository = attendanceRepository;
     this.evidenceService = evidenceService;
+    this.authService = authService;
   }
 
-  checkIn(employeeId, file) {
+  verifyEmployeeFace(employeeId, faceDescriptor) {
+    if (!this.authService) return;
+    const employee = this.authService.employeeRepository.findById(employeeId);
+    if (!employee) throw new AppError(404, 'EMPLOYEE_NOT_FOUND', 'Không tìm thấy nhân viên.');
+    let enrolled;
+    try {
+      enrolled = typeof employee.face_descriptor === 'string'
+        ? JSON.parse(employee.face_descriptor || 'null')
+        : employee.face_descriptor;
+    } catch {
+      enrolled = null;
+    }
+    // Nếu có gửi faceDescriptor hoặc tài khoản đã đăng ký khuôn mặt
+    if (faceDescriptor || enrolled) {
+      if (!Array.isArray(faceDescriptor) || faceDescriptor.length !== 128) {
+        throw new AppError(400, 'INVALID_FACE_SCAN', 'Cần quét khuôn mặt hợp lệ để chấm công.');
+      }
+      if (!enrolled) {
+        throw new AppError(400, 'FACE_NOT_ENROLLED', 'Tài khoản chưa có dữ liệu khuôn mặt mẫu.');
+      }
+      const distance = Math.sqrt(enrolled.reduce((sum, value, index) => sum + (value - faceDescriptor[index]) ** 2, 0));
+      if (distance > 0.55) {
+        throw new AppError(401, 'FACE_MISMATCH', `Khuôn mặt chấm công không khớp với nhân viên hiện tại (Khoảng cách: ${distance.toFixed(3)}). Chống chấm công hộ!`);
+      }
+    }
+  }
+
+  checkIn(employeeId, file, faceDescriptor = null) {
+    this.verifyEmployeeFace(employeeId, faceDescriptor);
     const now = new Date();
     const attendanceDate = getAttendanceDateHCM(now);
     const timestampIso = nowUtcIso();
@@ -60,7 +89,8 @@ class AttendanceService {
     }
   }
 
-  checkOut(employeeId, file) {
+  checkOut(employeeId, file, faceDescriptor = null) {
+    this.verifyEmployeeFace(employeeId, faceDescriptor);
     const now = new Date();
     const attendanceDate = getAttendanceDateHCM(now);
     const timestampIso = nowUtcIso();

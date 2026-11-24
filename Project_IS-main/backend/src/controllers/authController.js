@@ -2,12 +2,45 @@ const crypto = require('node:crypto');
 const { ensureCsrfToken } = require('../middleware/csrfMiddleware');
 const { validateLoginPayload } = require('../validators/authValidator');
 
+// Challenge pool theo báo cáo giữa kỳ (Active Liveness Challenge - Response)
+const CHALLENGE_POOL = [
+  { id: 'blink', instruction: 'Hãy CHỚP MẮT tự nhiên (2 lần)' },
+  { id: 'turn-left', instruction: 'Hãy QUAY MẶT SANG TRÁI, sau đó nhìn thẳng' },
+  { id: 'turn-right', instruction: 'Hãy QUAY MẶT SANG PHẢI, sau đó nhìn thẳng' },
+  { id: 'turn-left-blink', instruction: 'Hãy QUAY MẶT SANG TRÁI rồi CHỚP MẮT' },
+  { id: 'turn-right-blink', instruction: 'Hãy QUAY MẶT SANG PHẢI rồi CHỚP MẮT' },
+];
+
 function createAuthController(authService, env) {
   function getCsrfToken(req, res) {
     const csrfToken = ensureCsrfToken(req);
     return res.status(200).json({
       success: true,
       data: { csrfToken },
+    });
+  }
+
+  function getLivenessChallenge(req, res) {
+    const nonce = crypto.randomBytes(16).toString('hex');
+    const selected = CHALLENGE_POOL[Math.floor(Math.random() * CHALLENGE_POOL.length)];
+
+    if (!req.session.livenessChallenges) {
+      req.session.livenessChallenges = {};
+    }
+    // Lưu nonce với thời hạn 60 giây
+    req.session.livenessChallenges[nonce] = {
+      challengeId: selected.id,
+      createdAt: Date.now(),
+    };
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        nonce,
+        challengeId: selected.id,
+        instruction: selected.instruction,
+        expiresInSeconds: 60,
+      },
     });
   }
 
@@ -68,8 +101,37 @@ function createAuthController(authService, env) {
 
   async function faceLogin(req, res, next) {
     try {
-      const { identifier, password, faceDescriptor, liveness } = req.body || {};
-      if (liveness !== 'turn-left-right' || !Array.isArray(faceDescriptor)) return res.status(401).json({ success: false, error: { code: 'LIVENESS_FAILED', message: 'Complete the live face challenge.' } });
+      const { identifier, password, faceDescriptor, liveness, nonce } = req.body || {};
+
+      // 1. Kiểm tra session nonce & thử thách chống Replay Video / Replay Attack
+      const challenges = req.session.livenessChallenges || {};
+      const challengeRecord = challenges[nonce];
+
+      if (!nonce || !challengeRecord) {
+        return res.status(403).json({
+          success: false,
+          error: { code: 'INVALID_NONCE', message: 'Thử thách xác thực không hợp lệ hoặc đã hết hạn (Anti-Replay).' },
+        });
+      }
+
+      // Xóa nonce ngay sau 1 lần sử dụng (Single-use Nonce)
+      delete challenges[nonce];
+
+      if (Date.now() - challengeRecord.createdAt > 60 * 1000) {
+        return res.status(403).json({
+          success: false,
+          error: { code: 'CHALLENGE_EXPIRED', message: 'Thử thách đã quá hạn thời gian. Vui lòng thử lại.' },
+        });
+      }
+
+      // Kiểm tra loại liveness đã phản hồi có đúng thử thách đã cấp phát không
+      if (liveness !== challengeRecord.challengeId || !Array.isArray(faceDescriptor)) {
+        return res.status(401).json({
+          success: false,
+          error: { code: 'LIVENESS_FAILED', message: 'Phản hồi không khớp với thử thách động của hệ thống.' },
+        });
+      }
+
       const employee = await authService.authenticateFace(identifier, password, faceDescriptor);
       req.body = { identifier, password, rememberMe: Boolean(req.body.rememberMe) };
       return login(req, res, next);
@@ -115,6 +177,7 @@ function createAuthController(authService, env) {
 
   return {
     getCsrfToken,
+    getLivenessChallenge,
     login,
     register,
     faceLogin,

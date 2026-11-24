@@ -12,12 +12,16 @@ class EmployeeRepository {
        LIMIT 1`
     );
     this.findByIdStmt = db.prepare(
-      `SELECT id, employee_code, full_name, email, department, role, status, created_at
+      `SELECT id, employee_code, full_name, email, face_descriptor, department, role, status, created_at
        FROM employees
        WHERE id = ?
        LIMIT 1`
     );
     this.createStmt = db.prepare(`INSERT INTO employees (employee_code, full_name, email, password_hash, face_descriptor, department, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'EMPLOYEE', 'ACTIVE', ?)`);
+  }
+
+  findById(id) {
+    return this.findByIdStmt.get(id) || null;
   }
 
   findByIdentifier(identifier) {

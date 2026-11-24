@@ -4,7 +4,17 @@ const { validatePaginationQuery } = require('../validators/attendanceValidator')
 function createAttendanceController(attendanceService) {
   function checkIn(req, res, next) {
     try {
-      const record = attendanceService.checkIn(req.session.employeeId, req.file);
+      let faceDescriptor = null;
+      if (req.body && req.body.faceDescriptor) {
+        try {
+          faceDescriptor = typeof req.body.faceDescriptor === 'string'
+            ? JSON.parse(req.body.faceDescriptor)
+            : req.body.faceDescriptor;
+        } catch {
+          faceDescriptor = null;
+        }
+      }
+      const record = attendanceService.checkIn(req.session.employeeId, req.file, faceDescriptor);
       return res.status(201).json({
         success: true,
         message: 'Check-in recorded successfully',
@@ -17,7 +27,17 @@ function createAttendanceController(attendanceService) {
 
   function checkOut(req, res, next) {
     try {
-      const record = attendanceService.checkOut(req.session.employeeId, req.file);
+      let faceDescriptor = null;
+      if (req.body && req.body.faceDescriptor) {
+        try {
+          faceDescriptor = typeof req.body.faceDescriptor === 'string'
+            ? JSON.parse(req.body.faceDescriptor)
+            : req.body.faceDescriptor;
+        } catch {
+          faceDescriptor = null;
+        }
+      }
+      const record = attendanceService.checkOut(req.session.employeeId, req.file, faceDescriptor);
       return res.status(200).json({
         success: true,
         message: 'Check-out recorded successfully',
