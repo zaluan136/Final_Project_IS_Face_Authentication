@@ -6,7 +6,8 @@ function createAuthRoutes(authController, loginRateLimiter) {
   const router = express.Router();
 
   router.get('/csrf-token', authController.getCsrfToken);
-  router.get('/liveness-challenge', authController.getLivenessChallenge);
+  router.get('/liveness-challenge', (req, res) => authController.getLivenessChallenge(req, res));
+  router.get('/registration-challenge', authController.getRegistrationChallenge);
   router.post('/register', csrfProtection, authController.register);
   router.post('/face-login', loginRateLimiter, csrfProtection, authController.faceLogin);
   router.post('/login', loginRateLimiter, csrfProtection, authController.login);

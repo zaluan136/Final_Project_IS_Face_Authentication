@@ -19,7 +19,7 @@ function createAuthController(authService, env) {
     });
   }
 
-  function getLivenessChallenge(req, res) {
+  function getLivenessChallenge(req, res, purpose = 'login') {
     const nonce = crypto.randomBytes(16).toString('hex');
     const selected = CHALLENGE_POOL[crypto.randomInt(CHALLENGE_POOL.length)];
 
@@ -32,6 +32,7 @@ function createAuthController(authService, env) {
     // Lưu nonce với thời hạn 60 giây
     livenessChallenges[nonce] = {
       challengeId: selected.id,
+      purpose,
       createdAt: now,
     };
     req.session.livenessChallenges = livenessChallenges;
@@ -46,6 +47,8 @@ function createAuthController(authService, env) {
       },
     });
   }
+
+  function getRegistrationChallenge(req, res) { return getLivenessChallenge(req, res, 'register'); }
 
   async function login(req, res, next, faceVerified = false) {
     try {
@@ -101,6 +104,14 @@ function createAuthController(authService, env) {
       if (![employeeCode, name, email, password, department].every((v) => typeof v === 'string' && v.trim()) || password.length < 8 || password.length > 128 || !Array.isArray(faceDescriptor)) {
         return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Complete all fields and scan your face.' } });
       }
+      const { nonce, liveness, faceEvidence } = req.body;
+      const challenges = req.session.livenessChallenges || {};
+      const record = challenges[nonce];
+      if (record) delete challenges[nonce];
+      if (!record || record.purpose !== 'register' || record.challengeId !== liveness || Date.now() - record.createdAt > 60000) {
+        return res.status(403).json({ success: false, error: { code: 'INVALID_NONCE', message: 'Thử thách đăng ký không hợp lệ hoặc đã hết hạn.' } });
+      }
+      await verifyFaceEvidence(faceEvidence);
       const employee = await authService.register({ employeeCode: employeeCode.trim(), name: name.trim(), email: email.trim().toLowerCase(), password, department: department.trim(), faceDescriptor });
       return res.status(201).json({ success: true, data: { employee } });
     } catch (err) { return next(err); }
@@ -114,7 +125,7 @@ function createAuthController(authService, env) {
       const challenges = req.session.livenessChallenges || {};
       const challengeRecord = challenges[nonce];
 
-      if (!nonce || !challengeRecord) {
+      if (!nonce || !challengeRecord || challengeRecord.purpose !== 'login') {
         return res.status(403).json({
           success: false,
           error: { code: 'INVALID_NONCE', message: 'Thử thách xác thực không hợp lệ hoặc đã hết hạn.' },
@@ -186,6 +197,7 @@ function createAuthController(authService, env) {
   return {
     getCsrfToken,
     getLivenessChallenge,
+    getRegistrationChallenge,
     login,
     register,
     faceLogin,
